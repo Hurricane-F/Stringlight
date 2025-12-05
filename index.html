@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stringlight</title>
+    <!-- 引入本地 Blockly -->
+    <script src="lib/blockly/blockly.min.js"></script>
+    <script src="lib/blockly/python_compressed.js"></script>
+    <script src="lib/blockly/javascript_compressed.js"></script>
+    <script src="lib/blockly/zh-hans.js"></script>
+    
+    <!-- 引入本地 Prism -->
+    <link href="lib/prism/prism.min.css" rel="stylesheet" />
+    <script src="lib/prism/prism.min.js"></script>
+    <script src="lib/prism/prism-python.min.js"></script>
+
+    <style>
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; height: 100vh; display: flex; flex-direction: column; background-color: #f0f2f5; }
+        
+        /* 顶部导航栏 */
+        header { background-color: #343a40; color: white; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+        .logo { font-size: 1.2rem; font-weight: bold; display: flex; align-items: center; gap: 10px; }
+        .connection-box { display: flex; gap: 10px; align-items: center; background: rgba(255,255,255,0.1); padding: 5px 15px; border-radius: 4px; }
+        input { padding: 5px 8px; border-radius: 4px; border: 1px solid #ccc; font-size: 14px; }
+        button { padding: 6px 15px; border-radius: 4px; border: none; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        .btn-connect { background-color: #28a745; color: white; }
+        .btn-disconnect { background-color: #dc3545; color: white; display: none; }
+        .btn-run { background-color: #007bff; color: white; font-size: 1.1rem; padding: 8px 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .btn-run:active { transform: scale(0.98); }
+        .btn-stop { background-color: #dc3545; color: white; margin-left: 10px; }
+
+        /* 主体布局 */
+        #main-container { flex: 1; display: flex; overflow: hidden; }
+        #blockly-div { flex: 3; height: 100%; border-right: 1px solid #ddd; }
+        #code-panel { flex: 2; display: flex; flex-direction: column; background: white; max-width: 40%; }
+        
+        /* 代码显示区 */
+        .panel-header { background: #e9ecef; padding: 10px; font-weight: bold; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; }
+        #code-display { flex: 1; margin: 0; padding: 15px; overflow: auto; background-color: #f8f9fa; font-family: 'Consolas', monospace; font-size: 14px; }
+        
+        /* 日志区 */
+        #log-panel { height: 150px; background: #212529; color: #00ff00; padding: 10px; overflow-y: auto; font-family: monospace; font-size: 12px; border-top: 4px solid #343a40; }
+        .log-entry { margin-bottom: 4px; border-bottom: 1px solid #333; padding-bottom: 2px; }
+        .log-tx { color: #00ffff; } /* 发送 */
+        .log-rx { color: #ffff00; } /* 接收 */
+        .log-sys { color: #aaa; }   /* 系统 */
+
+        /* 状态指示灯 */
+        .status-indicator { width: 10px; height: 10px; border-radius: 50%; background-color: #6c757d; margin-right: 5px; }
+        .status-connected { background-color: #28a745; box-shadow: 0 0 5px #28a745; }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="logo">
+        <div id="status-light" class="status-indicator"></div>
+        弦动光年编程平台
+    </div>
+    
+    <div class="connection-box">
+        <input type="text" id="robot-ip" value="192.168.1.100" placeholder="机器人IP">
+        <input type="text" id="robot-port" value="8080" placeholder="端口" style="width: 60px;">
+        <button id="btn-connect" class="btn-connect" onclick="toggleConnection()">连接</button>
+    </div>
+
+    <div>
+        <button class="btn-run" onclick="runCode()">▶ 运行程序</button>
+        <button class="btn-stop" onclick="stopRobot()">■ 紧急停止</button>
+    </div>
+</header>
+
+<div id="main-container">
+    <!-- Blockly 工作区 -->
+    <div id="blockly-div"></div>
+
+    <!-- 右侧代码预览 -->
+    <div id="code-panel">
+        <div class="panel-header">
+            <span>Python 代码</span>
+        </div>
+        <pre id="code-display" class="language-python"><code># 代码将在这里生成...</code></pre>
+        <div id="log-panel">
+            <div class="log-entry log-sys">系统就绪，请连接机器人...</div>
+        </div>
+    </div>
+</div>
+
+<!-- Blockly 工具箱定义 -->
+<xml id="toolbox" style="display: none">
+    <category name="基础动作" colour="#4C97FF">
+        <block type="otto_walk"></block>
+        <block type="otto_turn"></block>
+        <block type="otto_jump"></block>
+        <block type="otto_home"></block>
+    </category>
+    <category name="高级舵机" colour="#FF6680">
+        <!-- 普通定位模式 -->
+        <block type="otto_servo_simple">
+            <value name="LL"><shadow type="math_number"><field name="NUM">90</field></shadow></value>
+            <value name="RL"><shadow type="math_number"><field name="NUM">90</field></shadow></value>
+            <value name="LF"><shadow type="math_number"><field name="NUM">90</field></shadow></value>
+            <value name="RF"><shadow type="math_number"><field name="NUM">90</field></shadow></value>
+            <value name="LH"><shadow type="math_number"><field name="NUM">45</field></shadow></value>
+            <value name="RH"><shadow type="math_number"><field name="NUM">135</field></shadow></value>
+            <value name="DURATION"><shadow type="math_number"><field name="NUM">1000</field></shadow></value>
+        </block>
+        
+        <!-- UPDATED: 振荡模式块 -->
+        <block type="otto_servo_oscillate">
+            <value name="PERIOD"><shadow type="math_number"><field name="NUM">1000</field></shadow></value>
+            <value name="CYCLES"><shadow type="math_number"><field name="NUM">5</field></shadow></value>
+            <!-- 默认参数：中心90度，振幅0度（不抖动） -->
+            <value name="LL_C"><shadow type="math_number"><field name="NUM">90</field></shadow></value>
+            <value name="LL_A"><shadow type="math_number"><field name="NUM">20</field></shadow></value>
+            
+            <value name="RL_C"><shadow type="math_number"><field name="NUM">90</field></shadow></value>
+            <value name="RL_A"><shadow type="math_number"><field name="NUM">20</field></shadow></value>
+            
+            <value name="LF_C"><shadow type="math_number"><field name="NUM">90</field></shadow></value>
+            <value name="LF_A"><shadow type="math_number"><field name="NUM">0</field></shadow></value>
+            
+            <value name="RF_C"><shadow type="math_number"><field name="NUM">90</field></shadow></value>
+            <value name="RF_A"><shadow type="math_number"><field name="NUM">0</field></shadow></value>
+            
+            <value name="LH_C"><shadow type="math_number"><field name="NUM">90</field></shadow></value>
+            <value name="LH_A"><shadow type="math_number"><field name="NUM">30</field></shadow></value>
+            
+            <value name="RH_C"><shadow type="math_number"><field name="NUM">90</field></shadow></value>
+            <value name="RH_A"><shadow type="math_number"><field name="NUM">30</field></shadow></value>
+        </block>
+    </category>
+    <category name="特殊动作" colour="#5ba55b">
+        <block type="otto_gesture"></block>
+        <block type="otto_mood"></block>
+        <block type="otto_moonwalk"></block>
+    </category>
+    <category name="手部控制" colour="#9966FF">
+        <block type="otto_hands"></block>
+        <block type="otto_wave"></block>
+    </category>
+    <category name="控制逻辑" colour="#FFBF00">
+        <block type="controls_repeat_ext">
+            <value name="TIMES">
+                <shadow type="math_number">
+                    <field name="NUM">3</field>
+                </shadow>
+            </value>
+        </block>
+        <block type="otto_sleep"></block>
+    </category>
+    <category name="数学" colour="#5b67a5">
+        <block type="math_number"></block>
+    </category>
+</xml>
+
+<script>
+    // ==========================================
+    // 1. Blockly 自定义块定义
+    // ==========================================
+    
+    // 走路
+    Blockly.Blocks['otto_walk'] = {
+        init: function() {
+            this.appendDummyInput().appendField("走路");
+            this.appendValueInput("STEPS").setCheck("Number").appendField("步数");
+            this.appendDummyInput()
+                .appendField("速度")
+                .appendField(new Blockly.FieldDropdown([["正常(1000)","1000"], ["快(700)","700"], ["慢(1500)","1500"]]), "SPEED")
+                .appendField("方向")
+                .appendField(new Blockly.FieldDropdown([["前进","1"], ["后退","-1"]]), "DIR");
+            this.setPreviousStatement(true, null);
+            this.setNextStatement(true, null);
+            this.setColour(210);
+            this.setTooltip("控制机器人前后行走");
+        }
+    };
+
+    // 转向
+    Blockly.Blocks['otto_turn'] = {
+        init: function() {
+            this.appendDummyInput().appendField("转向");
+            this.appendValueInput("STEPS").setCheck("Number").appendField("步数");
+            this.appendDummyInput()
+                .appendField("速度")
+                .appendField(new Blockly.FieldDropdown([["正常(1000)","1000"], ["快(700)","700"], ["慢(1500)","1500"]]), "SPEED")
+                .appendField("方向")
+                .appendField(new Blockly.FieldDropdown([["左转","1"], ["右转","-1"]]), "DIR");
+            this.setPreviousStatement(true, null);
+            this.setNextStatement(true, null);
+            this.setColour(210);
+        }
+    };
+
+    // 跳跃
+    Blockly.Blocks['otto_jump'] = {
+        init: function() {
+            this.appendDummyInput().appendField("跳跃").appendField("步数");
+            this.appendValueInput("STEPS").setCheck("Number");
+            this.appendDummyInput()
+                .appendField("速度")
+                .appendField(new Blockly.FieldDropdown([["正常(1000)","1000"], ["快(700)","700"]]), "SPEED");
+            this.setPreviousStatement(true, null);
+            this.setNextStatement(true, null);
+            this.setColour(120);
+        }
+    };
+
+    // 复位
+    Blockly.Blocks['otto_home'] = {
+        init: function() {
+            this.appendDummyInput().appendField("恢复立正姿势");
+            this.setPreviousStatement(true, null);
+            this.setNextStatement(true, null);
+            this.setColour(160);
+        }
+    };
+
+    // 姿态/动作
+    Blockly.Blocks['otto_gesture'] = {
+        init: function() {
+            this.appendDummyInput()
+                .appendField("执行动作")
+                .appendField(new Blockly.FieldDropdown([
+                    ["左右摇摆(swing)","swing"], 
+                    ["弯腰(bend)","bend"], 
+                    ["抖腿(shake_leg)","shake_leg"],
+                    ["上下运动(updown)","updown"],
+                    ["太空步(moonwalk)","moonwalk"],
+                    ["旋风腿(whirlwind_leg)","whirlwind_leg"]
+                ]), "ACTION");
+            this.appendValueInput("STEPS").setCheck("Number").appendField("次数");
+            this.appendDummyInput().appendField("速度").appendField(new Blockly.FieldDropdown([["快","800"],["中","1000"],["慢","1500"]]), "SPEED");
+            this.setPreviousStatement(true, null);
+            this.setNextStatement(true, null);
+            this.setColour(120);
+        }
+    };
+
+    // 固定动作
+    Blockly.Blocks['otto_mood'] = {
+        init: function() {
+            this.appendDummyInput()
+                .appendField("展示技能")
+                .appendField(new Blockly.FieldDropdown([
+                    ["坐下(sit)","sit"], 
+                    ["展示(showcase)","showcase"],
+                    ["广播体操","radio_calisthenics"],
+                    ["爱的魔力转圈圈","magic_circle"]
+                ]), "ACTION");
+            this.setPreviousStatement(true, null);
+            this.setNextStatement(true, null);
+            this.setColour(290);
+        }
+    };
+
+    // 太空步特例
+    Blockly.Blocks['otto_moonwalk'] = {
+        init: function() {
+            this.appendDummyInput().appendField("太空步");
+            this.appendValueInput("STEPS").setCheck("Number").appendField("步数");
+            this.appendDummyInput()
+                .appendField("方向")
+                .appendField(new Blockly.FieldDropdown([["左","1"], ["右","-1"]]), "DIR");
+            this.setPreviousStatement(true, null);
+            this.setNextStatement(true, null);
+            this.setColour(120);
+        }
+    };
+
+    // 手部动作
+    Blockly.Blocks['otto_hands'] = {
+        init: function() {
+            this.appendDummyInput()
+                .appendField("举手/放下")
+                .appendField(new Blockly.FieldDropdown([["举手","hands_up"], ["放下","hands_down"]]), "ACTION")
+                .appendField("哪只手")
+                .appendField(new Blockly.FieldDropdown([["双手","0"], ["左手","1"], ["右手","-1"]]), "DIR");
+            this.setPreviousStatement(true, null);
+            this.setNextStatement(true, null);
+            this.setColour(260);
+        }
+    };
+
+    // 挥手
+    Blockly.Blocks['otto_wave'] = {
+        init: function() {
+            this.appendDummyInput().appendField("挥手");
+            this.setPreviousStatement(true, null);
+            this.setNextStatement(true, null);
+            this.setColour(260);
+        }
+    };
+
+    // 等待
+    Blockly.Blocks['otto_sleep'] = {
+        init: function() {
+            this.appendDummyInput()
+                .appendField("等待")
+                .appendField(new Blockly.FieldNumber(1000, 0), "MS")
+                .appendField("毫秒");
+            this.setPreviousStatement(true, null);
+            this.setNextStatement(true, null);
+            this.setColour(60);
+        }
+    };
+
+    // ==========================================
+    // UPDATED: 舵机控制块 (普通 & 振荡)
+    // ==========================================
+
+    // 1. 普通定位模式 (原 otto_servo_sequence)
+    Blockly.Blocks['otto_servo_simple'] = {
+        init: function() {
+            this.appendDummyInput()
+                .appendField("舵机定位 (普通模式)");
+            
+            // 第一行：左侧舵机
+            this.appendValueInput("LL").setCheck("Number").appendField("左腿(LL)");
+            this.appendValueInput("LF").setCheck("Number").appendField("左脚(LF)");
+            this.appendValueInput("LH").setCheck("Number").appendField("左手(LH)");
+            
+            // 第二行：右侧舵机
+            this.appendValueInput("RL").setCheck("Number").appendField("右腿(RL)");
+            this.appendValueInput("RF").setCheck("Number").appendField("右脚(RF)");
+            this.appendValueInput("RH").setCheck("Number").appendField("右手(RH)");
+
+            // 第三行：时间
+            this.appendValueInput("DURATION").setCheck("Number").appendField("执行时间(毫秒)");
+
+            this.setPreviousStatement(true, null);
+            this.setNextStatement(true, null);
+            this.setColour(340);
+            this.setTooltip("设定每个舵机的绝对角度 (0-180度)。");
+            this.setInputsInline(false);
+        }
+    };
+
+// 2. UPDATED: 振荡模式 (单舵机版 - 每次只设置一个)
+    Blockly.Blocks['otto_servo_oscillate'] = {
+        init: function() {
+            this.appendDummyInput()
+                .appendField("单舵机振荡")
+                .appendField(new Blockly.FieldDropdown([
+                    ["左腿 (LL)", "ll"],
+                    ["右腿 (RL)", "rl"],
+                    ["左脚 (LF)", "lf"],
+                    ["右脚 (RF)", "rf"],
+                    ["左手 (LH)", "lh"],
+                    ["右手 (RH)", "rh"]
+                ]), "SERVO");
+            
+            this.appendValueInput("PERIOD")
+                .setCheck("Number")
+                .appendField("周期(ms)");
+                
+            this.appendValueInput("CYCLES")
+                .setCheck("Number")
+                .appendField("次数");
+
+            this.appendValueInput("CENTER")
+                .setCheck("Number")
+                .appendField("中心角度");
+
+            this.appendValueInput("AMP")
+                .setCheck("Number")
+                .appendField("振幅");
+
+            this.setPreviousStatement(true, null);
+            this.setNextStatement(true, null);
+            this.setColour(300);
+            this.setTooltip("指定单个舵机进行振荡运动，其他舵机将保持默认或静止。");
+            this.setInputsInline(true); // 单行显示，更紧凑
+        }
+    };
+
+    // ==========================================
+    // 2. Python 代码生成器 (用于展示)
+    // ==========================================
+    
+    const pyGen = python.pythonGenerator;
+
+    const pythonHeader = `
+import json
+import websocket
+
+class OttoController:
+    def __init__(self, ip, port=8080):
+        self.url = f"ws://{ip}:{port}/ws"
+        self.ws = websocket.create_connection(self.url)
+        self._msg_id = 0
+
+    def send_mcp_command(self, tool_name, args):
+        self._msg_id += 1
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": args
+            },
+            "id": self._msg_id
+        }
+        self.ws.send(json.dumps(payload))
+
+    def action(self, **kwargs):
+        self.send_mcp_command("self.otto.action", kwargs)
+
+    def sequence(self, json_str):
+        self.send_mcp_command("self.otto.servo_sequences", {"sequence": json_str})
+
+bot = OttoController("ROBOT_IP")
+
+# ----------------------------
+# 用户程序区域
+# ----------------------------
+`;
+
+    pyGen.forBlock['otto_walk'] = function(block) {
+        var steps = pyGen.valueToCode(block, 'STEPS', pyGen.ORDER_ATOMIC) || '1';
+        var speed = block.getFieldValue('SPEED');
+        var dir = block.getFieldValue('DIR');
+        return `bot.action(action="walk", steps=${steps}, speed=${speed}, direction=${dir}, arm_swing=50)\n`;
+    };
+
+    pyGen.forBlock['otto_turn'] = function(block) {
+        var steps = pyGen.valueToCode(block, 'STEPS', pyGen.ORDER_ATOMIC) || '1';
+        var speed = block.getFieldValue('SPEED');
+        var dir = block.getFieldValue('DIR');
+        return `bot.action(action="turn", steps=${steps}, speed=${speed}, direction=${dir}, arm_swing=50)\n`;
+    };
+
+    pyGen.forBlock['otto_jump'] = function(block) {
+        var steps = pyGen.valueToCode(block, 'STEPS', pyGen.ORDER_ATOMIC) || '1';
+        var speed = block.getFieldValue('SPEED');
+        return `bot.action(action="jump", steps=${steps}, speed=${speed})\n`;
+    };
+
+    pyGen.forBlock['otto_home'] = function(block) {
+        return `bot.action(action="home")\n`;
+    };
+
+    pyGen.forBlock['otto_gesture'] = function(block) {
+        var action = block.getFieldValue('ACTION');
+        var steps = pyGen.valueToCode(block, 'STEPS', pyGen.ORDER_ATOMIC) || '1';
+        var speed = block.getFieldValue('SPEED');
+        return `bot.action(action="${action}", steps=${steps}, speed=${speed}, amount=30)\n`;
+    };
+
+    pyGen.forBlock['otto_mood'] = function(block) {
+        var action = block.getFieldValue('ACTION');
+        return `bot.action(action="${action}", steps=1, speed=1000)\n`;
+    };
+
+    pyGen.forBlock['otto_moonwalk'] = function(block) {
+        var steps = pyGen.valueToCode(block, 'STEPS', pyGen.ORDER_ATOMIC) || '1';
+        var dir = block.getFieldValue('DIR');
+        return `bot.action(action="moonwalk", steps=${steps}, speed=1000, direction=${dir}, amount=30)\n`;
+    };
+
+    pyGen.forBlock['otto_hands'] = function(block) {
+        var action = block.getFieldValue('ACTION');
+        var dir = block.getFieldValue('DIR');
+        return `bot.action(action="${action}", speed=1000, direction=${dir})\n`;
+    };
+
+    pyGen.forBlock['otto_wave'] = function(block) {
+        var dir = block.getFieldValue('DIR');
+        return `bot.action(action="hand_wave", direction=${dir})\n`;
+    };
+
+    pyGen.forBlock['otto_sleep'] = function(block) {
+        var ms = block.getFieldValue('MS');
+        return `import time\ntime.sleep(${ms / 1000})\n`;
+    };
+
+    // UPDATED: 普通模式 Python 生成
+    pyGen.forBlock['otto_servo_simple'] = function(block) {
+        var ll = pyGen.valueToCode(block, 'LL', pyGen.ORDER_ATOMIC) || '90';
+        var rl = pyGen.valueToCode(block, 'RL', pyGen.ORDER_ATOMIC) || '90';
+        var lf = pyGen.valueToCode(block, 'LF', pyGen.ORDER_ATOMIC) || '90';
+        var rf = pyGen.valueToCode(block, 'RF', pyGen.ORDER_ATOMIC) || '90';
+        var lh = pyGen.valueToCode(block, 'LH', pyGen.ORDER_ATOMIC) || '45';
+        var rh = pyGen.valueToCode(block, 'RH', pyGen.ORDER_ATOMIC) || '135';
+        var duration = pyGen.valueToCode(block, 'DURATION', pyGen.ORDER_ATOMIC) || '1000';
+        
+        var jsonStr = `{"a":[{"s":{"ll":${ll},"rl":${rl},"lf":${lf},"rf":${rf},"lh":${lh},"rh":${rh}},"v":${duration}}],"d":0}`;
+        return `bot.sequence('${jsonStr}')\n`;
+    };
+
+    // NEW: 振荡模式 Python 生成
+    pyGen.forBlock['otto_servo_oscillate'] = function(block) {
+        var servo = block.getFieldValue('SERVO'); // 获取下拉菜单的值 (例如 "ll")
+        var period = pyGen.valueToCode(block, 'PERIOD', pyGen.ORDER_ATOMIC) || '1000';
+        var cycles = pyGen.valueToCode(block, 'CYCLES', pyGen.ORDER_ATOMIC) || '5';
+        var center = pyGen.valueToCode(block, 'CENTER', pyGen.ORDER_ATOMIC) || '90';
+        var amp = pyGen.valueToCode(block, 'AMP', pyGen.ORDER_ATOMIC) || '30';
+
+        // 构建 JSON 字符串
+        // 注意：这里动态插入了选中的舵机名称 (servo)
+        // 协议格式：{"a":[{"osc":{"a":{"ll":30},"o":{"ll":90},"p":1000,"c":5}}],"d":0}
+        
+        // 为了在 Python 代码显示中看起来整洁，我们直接拼接字符串
+        var jsonStr = `{"a":[{"osc":{"a":{"${servo}":${amp}},"o":{"${servo}":${center}},"p":${period},"c":${cycles}}}],"d":0}`;
+        
+        return `bot.sequence('${jsonStr}')\n`;
+    };
+
+    // ==========================================
+    // 3. JavaScript 代码生成器 (用于实际执行)
+    // ==========================================
+    
+    const jsGen = javascript.javascriptGenerator;
+
+    jsGen.forBlock['otto_walk'] = function(block) {
+        var steps = jsGen.valueToCode(block, 'STEPS', jsGen.ORDER_ATOMIC) || '1';
+        var speed = block.getFieldValue('SPEED');
+        var dir = block.getFieldValue('DIR');
+        return `await sendMcpTool("self.otto.action", {action: "walk", steps: ${steps}, speed: ${speed}, direction: ${dir}, arm_swing: 50});\n`;
+    };
+
+    jsGen.forBlock['otto_turn'] = function(block) {
+        var steps = jsGen.valueToCode(block, 'STEPS', jsGen.ORDER_ATOMIC) || '1';
+        var speed = block.getFieldValue('SPEED');
+        var dir = block.getFieldValue('DIR');
+        return `await sendMcpTool("self.otto.action", {action: "turn", steps: ${steps}, speed: ${speed}, direction: ${dir}, arm_swing: 50});\n`;
+    };
+
+    jsGen.forBlock['otto_jump'] = function(block) {
+        var steps = jsGen.valueToCode(block, 'STEPS', jsGen.ORDER_ATOMIC) || '1';
+        var speed = block.getFieldValue('SPEED');
+        return `await sendMcpTool("self.otto.action", {action: "jump", steps: ${steps}, speed: ${speed}});\n`;
+    };
+
+    jsGen.forBlock['otto_home'] = function(block) {
+        return `await sendMcpTool("self.otto.action", {action: "home"});\n`;
+    };
+
+    jsGen.forBlock['otto_gesture'] = function(block) {
+        var action = block.getFieldValue('ACTION');
+        var steps = jsGen.valueToCode(block, 'STEPS', jsGen.ORDER_ATOMIC) || '1';
+        var speed = block.getFieldValue('SPEED');
+        return `await sendMcpTool("self.otto.action", {action: "${action}", steps: ${steps}, speed: ${speed}, amount: 30});\n`;
+    };
+
+    jsGen.forBlock['otto_mood'] = function(block) {
+        var action = block.getFieldValue('ACTION');
+        return `await sendMcpTool("self.otto.action", {action: "${action}", steps: 1, speed: 1000});\n`;
+    };
+
+    jsGen.forBlock['otto_moonwalk'] = function(block) {
+        var steps = jsGen.valueToCode(block, 'STEPS', jsGen.ORDER_ATOMIC) || '1';
+        var dir = block.getFieldValue('DIR');
+        return `await sendMcpTool("self.otto.action", {action: "moonwalk", steps: ${steps}, speed: 1000, direction: ${dir}, amount: 30});\n`;
+    };
+
+    jsGen.forBlock['otto_hands'] = function(block) {
+        var action = block.getFieldValue('ACTION');
+        var dir = block.getFieldValue('DIR');
+        return `await sendMcpTool("self.otto.action", {action: "${action}", speed: 1000, direction: ${dir}});\n`;
+    };
+
+    jsGen.forBlock['otto_wave'] = function(block) {
+        var dir = block.getFieldValue('DIR');
+        return `await sendMcpTool("self.otto.action", {action: "hand_wave", direction: ${dir}});\n`;
+    };
+
+    jsGen.forBlock['otto_sleep'] = function(block) {
+        var ms = block.getFieldValue('MS');
+        return `await new Promise(r => setTimeout(r, ${ms}));\n`;
+    };
+
+    // UPDATED: 普通模式 JS 生成
+    jsGen.forBlock['otto_servo_simple'] = function(block) {
+        var ll = jsGen.valueToCode(block, 'LL', jsGen.ORDER_ATOMIC) || '90';
+        var rl = jsGen.valueToCode(block, 'RL', jsGen.ORDER_ATOMIC) || '90';
+        var lf = jsGen.valueToCode(block, 'LF', jsGen.ORDER_ATOMIC) || '90';
+        var rf = jsGen.valueToCode(block, 'RF', jsGen.ORDER_ATOMIC) || '90';
+        var lh = jsGen.valueToCode(block, 'LH', jsGen.ORDER_ATOMIC) || '90';
+        var rh = jsGen.valueToCode(block, 'RH', jsGen.ORDER_ATOMIC) || '90';
+        var duration = jsGen.valueToCode(block, 'DURATION', jsGen.ORDER_ATOMIC) || '1000';
+
+        var seqObj = {
+            a: [{
+                s: {
+                    ll: parseInt(ll), 
+                    rl: parseInt(rl), 
+                    lf: parseInt(lf), 
+                    rf: parseInt(rf), 
+                    lh: parseInt(lh), 
+                    rh: parseInt(rh)
+                },
+                v: parseInt(duration),
+                d: 0
+            }],
+            d: 0
+        };
+        
+        var jsonString = JSON.stringify(seqObj).replace(/"/g, '\\"');
+        return `await sendMcpTool("self.otto.servo_sequences", {sequence: "${jsonString}"});\n`;
+    };
+
+    // NEW: 振荡模式 JS 生成 (单舵机版)
+    jsGen.forBlock['otto_servo_oscillate'] = function(block) {
+        var servo = block.getFieldValue('SERVO');
+        var period = jsGen.valueToCode(block, 'PERIOD', jsGen.ORDER_ATOMIC) || '1000';
+        var cycles = jsGen.valueToCode(block, 'CYCLES', jsGen.ORDER_ATOMIC) || '5';
+        var center = jsGen.valueToCode(block, 'CENTER', jsGen.ORDER_ATOMIC) || '90';
+        var amp = jsGen.valueToCode(block, 'AMP', jsGen.ORDER_ATOMIC) || '30';
+
+        // 生成 JS 代码，动态构建对象并转换为 JSON 字符串
+        // 我们利用 JS 的计算属性名语法 { [key]: value } 来根据变量 servo 设置键名
+        return `
+        await sendMcpTool("self.otto.servo_sequences", {
+            sequence: JSON.stringify({
+                a: [{
+                    osc: {
+                        a: { "${servo}": parseInt(${amp}) },
+                        o: { "${servo}": parseInt(${center}) },
+                        p: parseInt(${period}),
+                        c: parseFloat(${cycles})
+                    }
+                }],
+                d: 0
+            })
+        });\n`;
+    };
+    // ==========================================
+    // 4. 系统逻辑
+    // ==========================================
+
+    // 初始化 Blockly
+    var workspace = Blockly.inject('blockly-div', {
+        toolbox: document.getElementById('toolbox'),
+        media: 'lib/media/', 
+        scrollbars: true,
+        grid: { spacing: 20, length: 3, colour: '#ccc', snap: true },
+        zoom: { controls: true, wheel: true, startScale: 1.0, maxScale: 3, minScale: 0.3, scaleSpeed: 1.2 }
+    });
+
+    // 实时更新代码
+    workspace.addChangeListener(function(event) {
+        const ip = document.getElementById('robot-ip').value;
+        let code = pyGen.workspaceToCode(workspace);
+        // 替换IP占位符
+        let fullCode = pythonHeader.replace("ROBOT_IP", ip) + code;
+        
+        // 更新显示
+        document.getElementById('code-display').innerHTML = Prism.highlight(fullCode, Prism.languages.python, 'python');
+    });
+
+    // WebSocket 管理
+    let socket = null;
+    let messageId = 0;
+
+    function log(msg, type='log-sys') {
+        const panel = document.getElementById('log-panel');
+        const entry = document.createElement('div');
+        entry.className = `log-entry ${type}`;
+        entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        panel.appendChild(entry);
+        panel.scrollTop = panel.scrollHeight;
+    }
+
+    function toggleConnection() {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.close();
+            return;
+        }
+
+        const ip = document.getElementById('robot-ip').value;
+        const port = document.getElementById('robot-port').value;
+        const url = `ws://${ip}:${port}/ws`;
+
+        log(`正在连接到 ${url}...`);
+
+        try {
+            socket = new WebSocket(url);
+
+            socket.onopen = function() {
+                log("连接成功!", 'log-sys');
+                document.getElementById('status-light').classList.add('status-connected');
+                document.getElementById('btn-connect').textContent = "断开";
+                document.getElementById('btn-connect').classList.replace('btn-connect', 'btn-disconnect');
+            };
+
+            socket.onclose = function() {
+                log("连接断开", 'log-sys');
+                document.getElementById('status-light').classList.remove('status-connected');
+                document.getElementById('btn-connect').textContent = "连接";
+                document.getElementById('btn-connect').classList.replace('btn-disconnect', 'btn-connect');
+            };
+
+            socket.onerror = function(err) {
+                log("连接错误", 'log-sys');
+            };
+
+            socket.onmessage = function(event) {
+                // 可以在这里处理机器人的回复
+            };
+
+        } catch (e) {
+            log(`连接异常: ${e}`, 'log-sys');
+        }
+    }
+
+    // 重构：通用的 sendMcpTool 函数
+    async function sendMcpTool(toolName, args) {
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+            log("错误: 未连接机器人，跳过指令", 'log-sys');
+            return;
+        }
+
+        // 默认参数补全 (仅针对 self.otto.action, 其他工具忽略)
+        let finalArgs = args;
+        if (toolName === "self.otto.action") {
+            const defaultArgs = {
+                steps: 1,
+                speed: 1000,
+                direction: 1,
+                amount: 30,
+                arm_swing: 50
+            };
+            finalArgs = { ...defaultArgs, ...args };
+        }
+
+        messageId = Date.now();
+        const payload = {
+            jsonrpc: "2.0",
+            method: "tools/call",
+            params: {
+                name: toolName,
+                arguments: finalArgs
+            },
+            id: messageId
+        };
+
+        const jsonStr = JSON.stringify(payload);
+        
+        // 简化的日志显示
+        if (toolName === "self.otto.servo_sequences") {
+             log(`TX: Servo Sequence`, 'log-tx');
+        } else if (finalArgs.action) {
+             log(`TX: Action=${finalArgs.action}`, 'log-tx');
+        } else {
+             log(`TX: Tool=${toolName}`, 'log-tx');
+        }
+        
+        socket.send(jsonStr);
+
+        // 智能延迟计算
+        let delay = 100;
+        
+        // 如果是动作指令，根据速度和步数估算延迟
+        if (toolName === "self.otto.action") {
+            if (finalArgs.speed && finalArgs.steps) {
+                delay = (finalArgs.steps * finalArgs.speed) + 200; 
+            } else if (finalArgs.speed) {
+                delay = finalArgs.speed + 200;
+            }
+        }
+        // 如果是序列指令，解析序列估算延迟
+        else if (toolName === "self.otto.servo_sequences") {
+            try {
+                // args.sequence 是个 JSON 字符串
+                const seq = JSON.parse(finalArgs.sequence);
+                if (seq.a && Array.isArray(seq.a)) {
+                    let totalTime = 0;
+                    seq.a.forEach(act => {
+                        // 振荡模式计算: 周期 * 次数
+                        if (act.osc) {
+                             const p = act.osc.p || 1000;
+                             const c = act.osc.c || 1;
+                             totalTime += (p * c);
+                        } else {
+                             // 普通模式
+                             totalTime += (act.v || 1000) + (act.d || 0);
+                        }
+                    });
+                    totalTime += (seq.d || 0);
+                    delay = totalTime + 100; // 额外缓冲
+                }
+            } catch(e) {
+                delay = 1000;
+            }
+        }
+
+        // 小技术延迟防止 socket 拥塞
+        await new Promise(r => setTimeout(r, 50)); 
+    }
+
+    // 运行代码
+    async function runCode() {
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+            alert("请先连接机器人！");
+            return;
+        }
+        
+        log("开始执行程序...", 'log-sys');
+        
+        // 生成 JavaScript 代码并执行
+        const code = jsGen.workspaceToCode(workspace);
+        
+        try {
+            // 将生成的代码包裹在一个 async 函数中执行
+            // 注意：现在传递 sendMcpTool 而不是 sendMcpAction
+            const asyncRunner = new Function('sendMcpTool', `return (async () => { 
+                try {
+                    ${code} 
+                    log("程序执行完毕", 'log-sys');
+                } catch (e) {
+                    log("运行时错误: " + e, 'log-sys');
+                }
+            })`);
+            
+            await asyncRunner(sendMcpTool)();
+        } catch (e) {
+            log(`代码解析错误: ${e}`, 'log-sys');
+        }
+    }
+
+    // 紧急停止
+    function stopRobot() {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            const payload = {
+                jsonrpc: "2.0",
+                method: "tools/call",
+                params: {
+                    name: "self.otto.stop",
+                    arguments: {}
+                },
+                id: Date.now()
+            };
+            socket.send(JSON.stringify(payload));
+            log("发送紧急停止指令!", 'log-sys');
+        }
+    }
+
+    // 初始触发一次代码更新
+    setTimeout(() => {
+        workspace.fireChangeListener(new Blockly.Events.BlockCreate(workspace.newBlock('otto_home')));
+    }, 500);
+
+</script>
+</body>
+</html>
